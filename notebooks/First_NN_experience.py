@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Prima idea di rete neurale che tratta dati sintetici
 np.random.seed(0)
@@ -17,6 +18,17 @@ def create_data(points, classes):
         y[ix]  =  class_number
 
     return X, y
+
+# Generazione dati sinusoidali
+def sine_data(samples=1000):
+    X = np.linspace(0, 4 * np.pi, samples)  
+    y = np.sin(X) 
+    X = X.reshape(-1, 1)  
+    y = y.reshape(-1, 1)  
+
+    return X, y
+
+
 
 
 # Definizione dei layer e activations
@@ -115,6 +127,17 @@ class Activation_Softmax:
             # Calcolo la matrice Jacobiana dell'output
             jacobian_matrix     =  np.diagflat(single_output) - np.dot(single_output, single_output.T)
             self.dinputs[index] =  np.dot(jacobian_matrix, single_dvalues)
+
+
+class Activation_Linear: 
+
+    def forward(self, inputs): 
+        self.inputs = inputs # Copia valore
+        self.output = inputs
+
+    def backward(self, dvalues):
+        # Derivata e' 1 che moltiplicato per dvalue rimane invariato (chain rule)
+        self.dinputs = dvalues.copy()
 
 # # # # # #
 # Ho scelto di utilizzare Adam come ottimizzatore
@@ -263,78 +286,110 @@ class Activation_Softmax_Loss_CategoricalCrossentropy():
         self.dinputs[range(samples), y_true] -= 1
         self.dinputs = self.dinputs / samples
 
+# Adotto Mean Squared Error loss (piu' adatto ad un Autoencoder)
+class Loss_MeanSquaredError(Loss): # con L2
+
+    def forward(self, y_pred, y_true): 
+        sample_losses = np.mean((y_true - y_pred) ** 2, axis = -1)
+        return sample_losses
+    
+    def backward(self, dvalues, y_true): 
+        samples = len(dvalues)
+        outputs = len(dvalues[0])
+
+        # Calcolo del gradiente e normalizzazione
+        self.dinputs = -2 * (y_true - dvalues) / outputs
+        self.dinputs = self.dinputs / samples
 
 # # #
 # Flusso 
 # # # # # # # #
 
-# Dataset a spirale
-X, y = create_data(points = 100, classes = 3)
+# Dataset sinusoidale
+X, y = sine_data()
 
-# Creazione del primo layer denso con 2 input e 64 output
-layer1_in  = Layer_Dense(2, 64)
+# Creazione del primo layer denso con 1 input e 64 output
+layer1_in  = Layer_Dense(1, 64)
 layer1_out = Activation_ReLU()
 
 # Creazione del layer di Dropout
-dropout_layer = Layer_Dropout(0.1)
+# dropout_layer = Layer_Dropout(0.1)
 
-# Creazione del secondo layer denso con 64 input e 3 output
-layer2_in  = Layer_Dense(64, 3)
-loss_layer2_out = Activation_Softmax_Loss_CategoricalCrossentropy()
+# Creazione del secondo layer denso con 64 input e 64 output
+layer2_in  = Layer_Dense(64, 64)
+layer2_out = Activation_ReLU()
+
+# Creazione del terzo layer denso con 64 input e 1 output
+layer3_in  = Layer_Dense(64, 1)
+layer3_out = Activation_Linear()
+
+loss_function = Loss_MeanSquaredError()
 
 # Definizione dell'ottimizzatore
-optimizer = Optimizer_Adam(learning_rate = 0.05, decay = 5e-7)
+optimizer = Optimizer_Adam(learning_rate = 0.005, decay = 1e-3)
+
+# Definizione del parametro di precisione (simulato)
+accuracy_precision = np.std(y) / 250
 
 # Train
 for epoch in range(10001): 
 
     layer1_in.forward(X)
     layer1_out.forward(layer1_in.output)
+    layer2_in.forward(layer1_out.output)
+    layer2_out.forward(layer2_in.output)
+    layer3_in.forward(layer2_out.output)
+    layer3_out.forward(layer3_in.output)
 
-    dropout_layer.forward(layer1_out.output)
-
-    layer2_in.forward(dropout_layer.output) 
-    data_loss = loss_layer2_out.forward(layer2_in.output, y)
-
-    regularization_loss = loss_layer2_out.loss.regularization_loss(layer1_in) + loss_layer2_out.loss.regularization_loss(layer2_in)
+    data_loss = loss_function.calculate(layer3_out.output, y)
+    regularization_loss = loss_function.regularization_loss(layer1_in) + loss_function.regularization_loss(layer2_in) + loss_function.regularization_loss(layer3_in)
     loss = data_loss + regularization_loss
 
-    # Calcolo precisione dall'output di Softmax 
-    predictions = np.argmax(loss_layer2_out.output, axis = 1)
-    if len(y.shape) == 2: 
-        y = np.argmax(y, axis = 1)
-    accuracy = np.mean(predictions == y)
+    # Calcolo precisione utilizzando <x = | y_pred - y_true | 
+    predictions = layer3_out.output
+    accuracy = np.mean(np.absolute(predictions - y) < accuracy_precision)
 
     if not epoch % 100: 
-                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, lr: {optimizer.current_learning_rate}')
+                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, data_loss: {regularization_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {optimizer.current_learning_rate}')
 
     # Backward
-    loss_layer2_out.backward(loss_layer2_out.output, y)
-    layer2_in.backward(loss_layer2_out.dinputs)
-    dropout_layer.backward(layer2_in.dinputs)
-    layer1_out.backward(dropout_layer.dinputs)
+    loss_function.backward(layer3_out.output, y)
+    layer3_out.backward(loss_function.dinputs)
+    layer3_in.backward(layer3_out.dinputs)
+    layer2_out.backward(layer3_in.dinputs)
+    layer2_in.backward(layer2_out.dinputs)
+    layer1_out.backward(layer2_in.dinputs)
     layer1_in.backward(layer1_out.dinputs)
 
     # Aggiornamento pesi e bias
     optimizer.pre_update_params()
     optimizer.update_params(layer1_in)
     optimizer.update_params(layer2_in)
+    optimizer.update_params(layer3_in)
     optimizer.post_update_params()
 
 # # # #
 # Validazione del modello
 
-X_test, y_test = create_data(points = 100, classes = 3)
+X_test, y_test = sine_data()
 
 layer1_in.forward(X_test)
 layer1_out.forward(layer1_in.output)
 layer2_in.forward(layer1_out.output)
-loss = loss_layer2_out.forward(layer2_in.output, y_test)
+layer2_out.forward(layer2_in.output)
+layer3_in.forward(layer2_out.output)
+layer3_out.forward(layer3_in.output)
+
+plt.plot(X_test, y_test)
+plt.plot(X_test, layer3_out.output)
+plt.show()
+
+''' 
+data_loss = loss_function.calculate(layer3_out.output, y)
 
 # Calcolo precisione
-predictions = np.argmax(loss_layer2_out.output, axis = 1)
-if len(y_test.shape) == 2: 
-    y_test = np.argmax(y_test, axis = 1)
-accuracy = np.mean(predictions == y_test)
+predictions = layer3_out.output
+accuracy = np.mean(np.absolute(predictions - y) < accuracy_precision)
 
 print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')
+'''
