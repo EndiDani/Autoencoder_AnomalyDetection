@@ -1,5 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+import cv2
+import pickle
+import copy
 
 # Prima idea di rete neurale che tratta dati sintetici
 np.random.seed(0)
@@ -44,7 +48,7 @@ class Layer_Dense:
         self.bias_regularizer_l1   = bias_regularizer_l1
         self.bias_regularizer_l2   = bias_regularizer_l2
 
-    def forward(self, inputs): 
+    def forward(self, inputs, training): 
         # Copia di input
         self.inputs = inputs 
         self.output = np.dot(inputs, self.weights) + self.biases # si muove in avanti
@@ -85,8 +89,13 @@ class Layer_Dropout:
         # Salvo il success rate per il dropout
         self.rate = 1 - rate
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         self.inputs      = inputs # Copia dei valori in input
+
+        if not training: 
+            self.output  = inputs.copy()
+            return 
+        
         self.binary_mask = np.random.binomial(1, self.rate, size = inputs.shape) / self.rate
         self.output      = inputs * self.binary_mask
 
@@ -94,9 +103,15 @@ class Layer_Dropout:
         self.dinputs = dvalues * self.binary_mask
 
 
+class Layer_Input:
+
+    def forward(self, inputs, training): 
+        self.output = inputs
+
+
 class Activation_ReLU: 
 
-    def forward(self, inputs): 
+    def forward(self, inputs, training): 
         #Copia degli input
         self.inputs = inputs
         self.output = np.maximum(0, inputs) # azzera i negativi
@@ -106,10 +121,13 @@ class Activation_ReLU:
         self.dinputs = dvalues.copy()
         self.dinputs[self.inputs <= 0] = 0 #azzero i negativi
 
+    def predictions(self, outputs): 
+        return outputs
+
 
 class Activation_Softmax: 
 
-    def forward(self, inputs): 
+    def forward(self, inputs, training): 
         # Copia dei valori in input
         self.inputs   = inputs
 
@@ -128,16 +146,21 @@ class Activation_Softmax:
             jacobian_matrix     =  np.diagflat(single_output) - np.dot(single_output, single_output.T)
             self.dinputs[index] =  np.dot(jacobian_matrix, single_dvalues)
 
+    def predictions(self, outputs): 
+        return np.argmax(outputs, axis = 1)
 
 class Activation_Linear: 
 
-    def forward(self, inputs): 
+    def forward(self, inputs, training): 
         self.inputs = inputs # Copia valore
         self.output = inputs
 
     def backward(self, dvalues):
         # Derivata e' 1 che moltiplicato per dvalue rimane invariato (chain rule)
         self.dinputs = dvalues.copy()
+
+    def predictions(self, outputs): 
+        return (outputs > 0.5) * 1
 
 # # # # # #
 # Ho scelto di utilizzare Adam come ottimizzatore
@@ -199,37 +222,60 @@ class Optimizer_Adam:
         self.iterations += 1
 
 
-
 # Calcolo Loss 
 class Loss: 
 
     # Regolarizzatore per il calcolo su loss
-    def regularization_loss(self, layer): 
+    def regularization_loss(self): 
         # default
         regularization_loss = 0
 
-        # L1 - pesi
-        if layer.weight_regularizer_l1 > 0:
-            regularization_loss += layer.weight_regularizer_l1 * np.sum(np.abs(layer.weights))
-        
-        # L2 - pesi
-        if layer.weight_regularizer_l2 > 0: 
-            regularization_loss += layer.weight_regularizer_l2 * np.sum(layer.weights * layer.weights)
+        for layer in self.trainable_layers: 
 
-        # L1 - bias
-        if layer.bias_regularizer_l2 > 0: 
-            regularization_loss += layer.bias_regularizer_l1   * np.sum(np.abs(layer.biases))
+            # L1 - pesi
+            if layer.weight_regularizer_l1 > 0:
+                regularization_loss += layer.weight_regularizer_l1 * np.sum(np.abs(layer.weights))
+            
+            # L2 - pesi
+            if layer.weight_regularizer_l2 > 0: 
+                regularization_loss += layer.weight_regularizer_l2 * np.sum(layer.weights * layer.weights)
 
-        # L2 - bias
-        if layer.bias_regularizer_l2 > 0: 
-            regularization_loss += layer.bias_regularizer_l2   * np.sum(layer.biases * layer.biases)
+            # L1 - bias
+            if layer.bias_regularizer_l2 > 0: 
+                regularization_loss += layer.bias_regularizer_l1   * np.sum(np.abs(layer.biases))
+
+            # L2 - bias
+            if layer.bias_regularizer_l2 > 0: 
+                regularization_loss += layer.bias_regularizer_l2   * np.sum(layer.biases * layer.biases)
 
         return regularization_loss
 
-    def calculate(self, output, y): 
+    def remember_trainable_layers(self, trainable_layers): 
+        self.trainable_layers = trainable_layers
+
+    def calculate(self, output, y, *, include_regularization = False): 
         sample_losses = self.forward(output, y)
         data_loss     = np.mean(sample_losses)
-        return data_loss
+
+        self.accumulated_sum   += np.sum(sample_losses)
+        self.accumulated_count += len(sample_losses)
+
+        if not include_regularization: 
+            return data_loss
+        
+        return data_loss, self.regularization_loss()
+
+    def calculate_accumulated(self, *, include_regularization = False): 
+        data_loss = self.accumulated_sum / self.accumulated_count
+
+        if not include_regularization: 
+            return data_loss
+        
+        return data_loss, self.regularization_loss()
+
+    def new_pass(self): 
+        self.accumulated_sum   = 0
+        self.accumulated_count = 0
     
 class Loss_CategoricalCrossentropy(Loss):
 
@@ -301,95 +347,296 @@ class Loss_MeanSquaredError(Loss): # con L2
         self.dinputs = -2 * (y_true - dvalues) / outputs
         self.dinputs = self.dinputs / samples
 
-# # #
-# Flusso 
-# # # # # # # #
 
-# Dataset sinusoidale
-X, y = sine_data()
+class Accuracy: 
 
-# Creazione del primo layer denso con 1 input e 64 output
-layer1_in  = Layer_Dense(1, 64)
-layer1_out = Activation_ReLU()
+    def calculate(self, predictions, y):
+        comparison = self.compare(predictions, y)
+        accuracy   = np.mean(comparison)
+        return accuracy
 
-# Creazione del layer di Dropout
-# dropout_layer = Layer_Dropout(0.1)
 
-# Creazione del secondo layer denso con 64 input e 64 output
-layer2_in  = Layer_Dense(64, 64)
-layer2_out = Activation_ReLU()
+class Accuracy_Regression(Accuracy):
 
-# Creazione del terzo layer denso con 64 input e 1 output
-layer3_in  = Layer_Dense(64, 1)
-layer3_out = Activation_Linear()
+    def __init__(self):
+        self.precision = None
 
-loss_function = Loss_MeanSquaredError()
+    def init(self, y, reinit = False):
 
-# Definizione dell'ottimizzatore
-optimizer = Optimizer_Adam(learning_rate = 0.005, decay = 1e-3)
+        if self.precision is None or reinit:
+            self.precision = np.std(y) / 250
 
-# Definizione del parametro di precisione (simulato)
-accuracy_precision = np.std(y) / 250
+    def compare(self, predictions, y):
+        return np.absolute(predictions - y) < self.precision
 
-# Train
-for epoch in range(10001): 
 
-    layer1_in.forward(X)
-    layer1_out.forward(layer1_in.output)
-    layer2_in.forward(layer1_out.output)
-    layer2_out.forward(layer2_in.output)
-    layer3_in.forward(layer2_out.output)
-    layer3_out.forward(layer3_in.output)
 
-    data_loss = loss_function.calculate(layer3_out.output, y)
-    regularization_loss = loss_function.regularization_loss(layer1_in) + loss_function.regularization_loss(layer2_in) + loss_function.regularization_loss(layer3_in)
-    loss = data_loss + regularization_loss
+class Model: 
 
-    # Calcolo precisione utilizzando <x = | y_pred - y_true | 
-    predictions = layer3_out.output
-    accuracy = np.mean(np.absolute(predictions - y) < accuracy_precision)
+    def __init__(self): 
+        self.layers = []
+        self.softmax_classifier_output = None
+    
+    def add(self, layer):
+        self.layers.append(layer)
+    
+    def set(self, *, loss, optimizer, accuracy): 
+        self.loss      = loss
+        self.optimizer = optimizer
+        self.accuracy  = accuracy
 
-    if not epoch % 100: 
-                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, data_loss: {regularization_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {optimizer.current_learning_rate}')
+    def finalize(self): 
+        self.input_layer      = Layer_Input()
+        layer_count           = len(self.layers)
+        self.trainable_layers = []
 
-    # Backward
-    loss_function.backward(layer3_out.output, y)
-    layer3_out.backward(loss_function.dinputs)
-    layer3_in.backward(layer3_out.dinputs)
-    layer2_out.backward(layer3_in.dinputs)
-    layer2_in.backward(layer2_out.dinputs)
-    layer1_out.backward(layer2_in.dinputs)
-    layer1_in.backward(layer1_out.dinputs)
+        for i in range(layer_count): 
 
-    # Aggiornamento pesi e bias
-    optimizer.pre_update_params()
-    optimizer.update_params(layer1_in)
-    optimizer.update_params(layer2_in)
-    optimizer.update_params(layer3_in)
-    optimizer.post_update_params()
+            # Se e' il primo layer il layer precedente era l'inputLayer
+            if i == 0: 
+                self.layers[i].prev = self.input_layer
+                self.layers[i].next = self.layers[i + 1]
 
-# # # #
-# Validazione del modello
+            # Per tutti i layer eccetto il primo e l'ultimo
+            elif i < layer_count - 1: 
+                self.layers[i].prev = self.layers[i - 1]
+                self.layers[i].next = self.layers[i + 1]
 
-X_test, y_test = sine_data()
+            # L'ultimo layer contiene il loss con oltre a stampare l'output
+            else: 
+                self.layers[i].prev           = self.layers[i - 1]
+                self.layers[i].next          = self.loss
+                self.output_layer_activation = self.layers[i]
 
-layer1_in.forward(X_test)
-layer1_out.forward(layer1_in.output)
-layer2_in.forward(layer1_out.output)
-layer2_out.forward(layer2_in.output)
-layer3_in.forward(layer2_out.output)
-layer3_out.forward(layer3_in.output)
+            # Se il layer ha un attributo chiamato "weights" (riferito al peso)
+            # e' definito allenabile
+            if hasattr(self.layers[i], 'weights'): 
+                self.trainable_layers.append(self.layers[i])
+        
+        # Aggiornamento loss con i layer allenabili
+        self.loss.remember_trainable_layers(self.trainable_layers)
 
-plt.plot(X_test, y_test)
-plt.plot(X_test, layer3_out.output)
-plt.show()
+    def train(self, X, y, *, epochs = 1, print_every = 1, validation_data = None): 
+        
+        self.accuracy.init(y)
 
-''' 
-data_loss = loss_function.calculate(layer3_out.output, y)
+        for epoch in range(1, epochs + 1):
+            # Forward pass
+            output = self.forward(X, training = True)
 
-# Calcolo precisione
-predictions = layer3_out.output
-accuracy = np.mean(np.absolute(predictions - y) < accuracy_precision)
+            # Calcolo loss
+            data_loss, regularization_loss = self.loss.calculate(output, y, include_regularization = True)
+            loss = data_loss + regularization_loss
 
-print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')
+            predictions = self.output_layer_activation.predictions(output)
+            accuracy    = self.accuracy.calculate(predictions, y)
+
+            self.backward(output, y)
+
+            # Ottimizazzione
+            self.optimizer.pre_update_params()
+            for layer in self.trainable_layers: 
+                self.optimizer.update_params(layer)
+            self.optimizer.post_update_params()
+
+            if not epoch % print_every: 
+                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, data_loss: {regularization_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
+
+        # Se c'e' la validazione dei dati
+        if validation_data is not None: 
+            # Leggibilita'
+            X_val, y_val  =  validation_data
+            output        =  self.forward(X_val, training=False)
+            loss          =  self.loss.calculate(output, y_val)
+            predictions    =  self.output_layer_activation.predictions(output)
+            accuracy      =  self.accuracy.calculate(predictions, y_val)
+
+            print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')
+
+    def forward(self, X, training): 
+        # Chiamata al forward pass del layer di input
+        self.input_layer.forward(X, training)
+
+        # Chiamata al forward pass per ogni layer nella catena
+        # Ogni output viene passato come parametro al layer successivo
+        for layer in self.layers: 
+            layer.forward(layer.prev.output, training)
+
+        return layer.output #ultimo layer
+
+    def backward(self, output, y): 
+        # Salto i controlli per softmax e attivazioni
+        # che non mi serviranno per il mio autoencoder
+        self.loss.backward(output, y)
+
+        for layer in reversed(self.layers): 
+            layer.backward(layer.next.dinputs)
+
+    # Sulla evaluation mi concentrero' solo sul loss
+    def evaluate(self, X_val, y_val, *, batch_size = None):
+        validation_steps = 1
+
+        # Calcolo numero di step
+        if batch_size is not None: 
+            validation_steps = len(X_val) // batch_size
+            if validation_steps * batch_size < len(X_val): 
+                validation_steps += 1
+        
+        self.loss.new_pass()
+
+        for step in range(validation_steps): 
+            # Se batch_size non e' settato utilizzo uno step e tutto il dataset
+            if batch_size is None: 
+                batch_X = X_val
+                batch_y = y_val
+            
+            # Altrimenti divido il batch
+            else: 
+                batch_X = X_val[step * batch_size:(step + 1) * batch_size]
+                batch_y = y_val[step * batch_size:(step + 1) * batch_size]
+            
+            output = self.forward(batch_X, training = False)
+            # Calcolo della loss
+            self.loss.calculate(output, batch_y)
+
+        validation_loss = self.loss.calculate_accumulated()
+        print(f'validation, loss: {validation_loss:.3f}')
+    
+    def predict(self, X, *, batch_size = None): 
+        prediction_steps = 1
+
+        if batch_size is not None: 
+            prediction_steps = len(X) // batch_size
+            
+            if prediction_steps * batch_size < len(X): 
+                prediction_steps += 1
+
+        # Output del modello
+        output = []
+
+        for step in range(prediction_steps): 
+            if batch_size is None: 
+                batch_X = X
+            else: 
+                batch_X = X[step * batch_size:(step + 1) * batch_size]
+
+            batch_output = self.forward(batch_X, training = False)
+            # Append nella lista delle predizioni
+            output.append(batch_output)
+        
+        # Si stackano le previsioni e si ritornano
+        return np.vstack(output)
+
+    def get_parameters(self):
+        parameters = []
+
+        for layer in self.trainable_layers:
+            parameters.append(layer.get_parameters())
+        return parameters
+    
+    def set_parameters(self, parameters): 
+        
+        for parameter_set, layer in zip(parameters, self.trainable_layers): 
+            layer.set_parameters(*parameter_set)
+    
+    # Salva i parametri in un file
+    def save_parameters(self, path): 
+
+        with open(path, "wb") as f: 
+            pickle.dump(self.get_parameters(), f)
+    
+    # Carica i parametri
+    def load_parameters(self, path): 
+
+        with open(path, "rb") as f: 
+            self.set_parameters(pickle.loads(f))
+
+    # Salva il modello
+    def save(self, path): 
+        
+        model = copy.deepcopy(self)
+
+        # Reset dei valori accumulati in loss
+        model.loss.new_pass()
+
+        # Pulizia dell'input layer e dei gradienti 
+        model.input_layer.__dict__.pop('output', None)
+        model.loss.__dict__.pop('dinputs', None)
+
+        # Per ogni layer rimuove gli input, output e dinputs
+        for layer in model.layers: 
+            for property in ['inputs', 'output', 'dinputs', 'dweights', 'dbiases']: 
+                layer.__dict__.pop(property, None)
+        
+        # Salvataggio del modello in un file
+        with open(path, 'wb') as f: 
+            pickle.dump(model, f)
+        
+    # Ritorna il modello salvato
+    @staticmethod
+    def load(path): 
+        
+        with open(path, 'rb') as f: 
+            model = pickle.load(f)
+        return model
+    
+
+    
+# Carica un dataset MNIST
+def load_mnist_dataset(dataset, path):
+
+    # Cerca in ogni cartella e crea una lista di etichette
+    labels = os.listdir(os.path.join(path, dataset))
+
+    # Lista di campioni e etichette
+    X = []
+    y = []
+
+    # Per ogni cartella
+    for label in labels:
+        # Per ogni immagine
+        for file in os.listdir(os.path.join(path, dataset, label)):
+            # Legge l'immagine e la aggiunge alla lista
+            image = cv2.imread(
+                        os.path.join(path, dataset, label, file),
+                        cv2.IMREAD_UNCHANGED)
+
+            
+            X.append(image)
+            y.append(label)
+
+    # Converte il dato in un array numpy
+    return np.array(X), np.array(y).astype('uint8')
+
+
+# (train + test) del dataset MNSIT
+def create_data_mnist(path):
+
+    # Caricamento di entrambi i test, in maniera separata
+    X, y = load_mnist_dataset('train', path)
+    X_test, y_test = load_mnist_dataset('test', path)
+
+    return X, y, X_test, y_test
+
+    
+mnist_label = {}
+
+''' Comandi potenzialmente utili per dopo
+# Lettura immagini
+image_data  = cv2.imread('', cv2.IMREAD_GRAYSCALE)
+# Resize 
+image_data  = cv2.resize(image_data, (28, 28))
+# Invesione colore
+image_data  = 255 - image_data
+# Reshape e pixel scale
+image_data  = (image_data.reshape(1, -1).astype(np.float32) - 127.5) / 127.5
+# Caricamento del modello
+model       = Model.load('.model')
+# Previsione sull'immagine
+confidences = model.predict(image_data)
+# Estrai la predizione sul livello di confidenza
+predictions = model.output_layer_activation.predictions(confidences)
+# Nome dell'etichetta dal campione totale
+prediction  = fashion_mnist_labels[predictions[0]]
+print(prediction)
 '''
