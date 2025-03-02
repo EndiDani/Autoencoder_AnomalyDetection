@@ -22,9 +22,15 @@ def create_data(points, classes):
 # Definizione dei layer e activations
 class Layer_Dense:
     
-    def __init__(self, n_inputs, n_neurons): 
+    def __init__(self, n_inputs, n_neurons, weight_regularizer_l1 = 0, weight_regularizer_l2 = 0, bias_regularizer_l1 = 0, bias_regularizer_l2 = 0): 
         self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
         self.biases  = np.zeros((1, n_neurons))
+
+        # Definizione dei regolarizzatori
+        self.weight_regularizer_l1 = weight_regularizer_l1
+        self.weight_regularizer_l2 = weight_regularizer_l2
+        self.bias_regularizer_l1   = bias_regularizer_l1
+        self.bias_regularizer_l2   = bias_regularizer_l2
 
     def forward(self, inputs): 
         # Copia di input
@@ -35,8 +41,45 @@ class Layer_Dense:
         # Calcolo del gradiente sui parametri
         self.dweights = np.dot(self.inputs.T, dvalues)
         self.dbiases  = np.sum(dvalues, axis = 0, keepdims = True)
+
+        # Gradienti nei regolarizzatori
+        # L1 sui pesi
+        if self.weight_regularizer_l1 > 0: 
+            dL1                   = np.ones_like(self.weights)
+            dL1[self.weights < 0] = -1
+            self.dweights        += self.weight_regularizer_l1 * dL1
+        
+        #L2 sui pesi
+        if self.weight_regularizer_l2 > 0: 
+            self.dweights += 2 * self.weight_regularizer_l2 * self.weights
+
+        #L1 sui bias
+        if self.bias_regularizer_l1 > 0: 
+            dL1                 = np.ones_like(self.biases)
+            dL1[self.biass < 0] = -1
+            self.dbiases       += self.bias_regularizer_l1 * dL1
+        
+        #L2 sui bias
+        if self.bias_regularizer_l2 > 0: 
+            self.dbiases += 2 * self.bias_regularizer_l2 * self.biases
+        
         # Calcolo del gradiente sugli inputs
         self.dinputs  = np.dot(dvalues, self.weights.T)
+
+
+class Layer_Dropout: 
+
+    def __init__(self, rate): 
+        # Salvo il success rate per il dropout
+        self.rate = 1 - rate
+
+    def forward(self, inputs):
+        self.inputs      = inputs # Copia dei valori in input
+        self.binary_mask = np.random.binomial(1, self.rate, size = inputs.shape) / self.rate
+        self.output      = inputs * self.binary_mask
+
+    def backward(self, dvalues): 
+        self.dinputs = dvalues * self.binary_mask
 
 
 class Activation_ReLU: 
@@ -137,6 +180,29 @@ class Optimizer_Adam:
 # Calcolo Loss 
 class Loss: 
 
+    # Regolarizzatore per il calcolo su loss
+    def regularization_loss(self, layer): 
+        # default
+        regularization_loss = 0
+
+        # L1 - pesi
+        if layer.weight_regularizer_l1 > 0:
+            regularization_loss += layer.weight_regularizer_l1 * np.sum(np.abs(layer.weights))
+        
+        # L2 - pesi
+        if layer.weight_regularizer_l2 > 0: 
+            regularization_loss += layer.weight_regularizer_l2 * np.sum(layer.weights * layer.weights)
+
+        # L1 - bias
+        if layer.bias_regularizer_l2 > 0: 
+            regularization_loss += layer.bias_regularizer_l1   * np.sum(np.abs(layer.biases))
+
+        # L2 - bias
+        if layer.bias_regularizer_l2 > 0: 
+            regularization_loss += layer.bias_regularizer_l2   * np.sum(layer.biases * layer.biases)
+
+        return regularization_loss
+
     def calculate(self, output, y): 
         sample_losses = self.forward(output, y)
         data_loss     = np.mean(sample_losses)
@@ -209,6 +275,9 @@ X, y = create_data(points = 100, classes = 3)
 layer1_in  = Layer_Dense(2, 64)
 layer1_out = Activation_ReLU()
 
+# Creazione del layer di Dropout
+dropout_layer = Layer_Dropout(0.1)
+
 # Creazione del secondo layer denso con 64 input e 3 output
 layer2_in  = Layer_Dense(64, 3)
 loss_layer2_out = Activation_Softmax_Loss_CategoricalCrossentropy()
@@ -217,13 +286,18 @@ loss_layer2_out = Activation_Softmax_Loss_CategoricalCrossentropy()
 optimizer = Optimizer_Adam(learning_rate = 0.05, decay = 5e-7)
 
 # Train
-for epoch in range(50001): 
+for epoch in range(10001): 
 
     layer1_in.forward(X)
     layer1_out.forward(layer1_in.output)
 
-    layer2_in.forward(layer1_out.output) ##
-    loss = loss_layer2_out.forward(layer2_in.output, y)
+    dropout_layer.forward(layer1_out.output)
+
+    layer2_in.forward(dropout_layer.output) 
+    data_loss = loss_layer2_out.forward(layer2_in.output, y)
+
+    regularization_loss = loss_layer2_out.loss.regularization_loss(layer1_in) + loss_layer2_out.loss.regularization_loss(layer2_in)
+    loss = data_loss + regularization_loss
 
     # Calcolo precisione dall'output di Softmax 
     predictions = np.argmax(loss_layer2_out.output, axis = 1)
@@ -237,7 +311,8 @@ for epoch in range(50001):
     # Backward
     loss_layer2_out.backward(loss_layer2_out.output, y)
     layer2_in.backward(loss_layer2_out.dinputs)
-    layer1_out.backward(layer2_in.dinputs)
+    dropout_layer.backward(layer2_in.dinputs)
+    layer1_out.backward(dropout_layer.dinputs)
     layer1_in.backward(layer1_out.dinputs)
 
     # Aggiornamento pesi e bias
@@ -245,3 +320,21 @@ for epoch in range(50001):
     optimizer.update_params(layer1_in)
     optimizer.update_params(layer2_in)
     optimizer.post_update_params()
+
+# # # #
+# Validazione del modello
+
+X_test, y_test = create_data(points = 100, classes = 3)
+
+layer1_in.forward(X_test)
+layer1_out.forward(layer1_in.output)
+layer2_in.forward(layer1_out.output)
+loss = loss_layer2_out.forward(layer2_in.output, y_test)
+
+# Calcolo precisione
+predictions = np.argmax(loss_layer2_out.output, axis = 1)
+if len(y_test.shape) == 2: 
+    y_test = np.argmax(y_test, axis = 1)
+accuracy = np.mean(predictions == y_test)
+
+print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')
