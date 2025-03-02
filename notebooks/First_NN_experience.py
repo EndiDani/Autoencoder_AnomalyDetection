@@ -74,7 +74,6 @@ class Activation_Softmax:
             self.dinputs[index] = np.dot(jacobian_matrix, single_dvalues)
 
 
-
 # Calcolo Loss (ripassa questa parte)
 class Loss: 
 
