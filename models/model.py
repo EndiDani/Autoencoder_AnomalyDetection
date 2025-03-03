@@ -82,7 +82,7 @@ class Model:
                 print(f'epoch: {epoch}, loss: {loss:.3f}, data_loss: {data_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
 
             # Salvataggio modello
-            if not epoch % 3: 
+            if not epoch % 10: 
                 self.save(f"./models/training/autoencoder_epoch_{epoch}.pk1")
 
         # Se c'e' la validazione dei dati
