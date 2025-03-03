@@ -35,55 +35,31 @@ Activation8   = Activation_Sigmoid()
 DecoderDense4 = Layer_Dense(392, 784)
 Activation9   = Activation_Sigmoid()
 
-Model = Model()
+model = Model()
 
-Model.add(EncoderDense1)
-Model.add(Activation1)
-Model.add(EncoderDense2)
-Model.add(Activation2)
-Model.add(EncoderDense3)
-Model.add(Activation3)
-Model.add(EncoderDense4)
-Model.add(Activation4)
+model.add(EncoderDense1)
+model.add(Activation1)
+model.add(EncoderDense2)
+model.add(Activation2)
+model.add(EncoderDense3)
+model.add(Activation3)
+model.add(EncoderDense4)
+model.add(Activation4)
 
-Model.add(BottleneckDense)
-Model.add(Activation5)
+model.add(BottleneckDense)
+model.add(Activation5)
 
-Model.add(DecoderDense1)
-Model.add(Activation6)
-Model.add(DecoderDense2)
-Model.add(Activation7)
-Model.add(DecoderDense3)
-Model.add(Activation8)
-Model.add(DecoderDense4)
-Model.add(Activation9)
+model.add(DecoderDense1)
+model.add(Activation6)
+model.add(DecoderDense2)
+model.add(Activation7)
+model.add(DecoderDense3)
+model.add(Activation8)
+model.add(DecoderDense4)
+model.add(Activation9)
 
-Model.finalize()
+model.finalize()
 
-Model.train(X_train, epochs = 1000, print_every = 100, validation_data = X_test)
+model.train(X_train, epochs = 1, batch_size = 64, print_every = 100, validation_data = X_test)
 
-output = Model.forward(X_test, training = False)
-
-num_images = 5  # Numero di immagini da visualizzare
-indices = np.random.choice(X_test.shape[0], num_images, replace=False)
-
-for idx in indices:
-    # Ricostruisci le immagini a 28x28 per visualizzarle
-    input_img = X_test[idx].reshape(28, 28)
-    output_img = output[idx].reshape(28, 28)
-
-    plt.figure(figsize=(4, 2))
-    
-    # Immagine di input
-    plt.subplot(1, 2, 1)
-    plt.title("Input")
-    plt.imshow(input_img, cmap='gray')
-    plt.axis('off')
-    
-    # Immagine ricostruita
-    plt.subplot(1, 2, 2)
-    plt.title("Ricostruzione")
-    plt.imshow(output_img, cmap='gray')
-    plt.axis('off')
-    
-    plt.show()
+model.save((f"./results/model_checkpoints/autoencoder_final_model.pk1"))

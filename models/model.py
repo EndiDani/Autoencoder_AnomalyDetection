@@ -1,16 +1,17 @@
 import numpy as np
 import pickle
 import copy
-from   layers    import Layer_Input
-from   optimizer import Optimizer_Adam
-from   loss      import Loss_MeanSquaredError
+from   models.layers    import Layer_Input
+from   models.optimizer import Optimizer_Adam
+from   models.loss      import Loss_MeanSquaredError
 
 class Model: 
 
     def __init__(self): 
-        self.layers    = []
-        self.loss      = Loss_MeanSquaredError()
-        self.optimizer = Optimizer_Adam()
+        self.layers      = []
+        self.loss        = Loss_MeanSquaredError()
+        self.optimizer   = Optimizer_Adam()
+        self.lossHistory = []
     
     def add(self, layer):
         self.layers.append(layer)
@@ -46,33 +47,50 @@ class Model:
         # Aggiornamento loss con i layer allenabili
         self.loss.remember_trainable_layers(self.trainable_layers)
 
-    def train(self, X, *, epochs = 1, print_every = 1, validation_data = None): 
+    def train(self, X, *, epochs = 1, batch_size = 32, print_every = 1, validation_data = None): 
         
+        # Numero totale di campioni
+        num_samples = X.shape[0]
+
         for epoch in range(1, epochs + 1):
-            # Forward pass
-            output = self.forward(X, training = True)
+            # Divisione e mischia dei dati per ogni epoca
+            indicies = np.arange(num_samples)
+            np.random.shuffle(indicies)
+            X = X[indicies]
 
-            # Calcolo loss
-            data_loss, regularization_loss = self.loss.calculate(output, X, include_regularization = True)
-            loss = data_loss + regularization_loss
+            for start in range(0, num_samples, batch_size):
+                end = start + batch_size
+                batch_X = X[start:end]
 
-            self.backward(output, X)
+                # Forward pass
+                output = self.forward(batch_X, training = True)
 
-            # Ottimizazzione
-            self.optimizer.pre_update_params()
-            for layer in self.trainable_layers: 
-                self.optimizer.update_params(layer)
-            self.optimizer.post_update_params()
+                # Calcolo loss
+                data_loss, regularization_loss = self.loss.calculate(output, batch_X, include_regularization = True)
+                loss = data_loss + regularization_loss
+                self.lossHistory.append(loss)
+                
+                self.backward(output, batch_X)
+
+                # Ottimizazzione
+                self.optimizer.pre_update_params()
+                for layer in self.trainable_layers: 
+                    self.optimizer.update_params(layer)
+                self.optimizer.post_update_params()
 
             if not epoch % print_every: 
                 print(f'epoch: {epoch}, loss: {loss:.3f}, data_loss: {data_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
+
+            # Salvataggio modello
+            if not epoch % 3: 
+                self.save(f"./models/training/autoencoder_epoch_{epoch}.pk1")
 
         # Se c'e' la validazione dei dati
         if validation_data is not None: 
             # Leggibilita'
             X_val         =  validation_data
             output        =  self.forward(X_val, training=False)
-            loss          =  self.loss.calculate(output)
+            loss          =  self.loss.calculate(output, X_val)
 
             print(f'validation loss: {loss:.3f}')
 
