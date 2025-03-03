@@ -1,22 +1,19 @@
 import numpy as np
 import pickle
 import copy
-from layers import Layer_Input
-
+from   layers    import Layer_Input
+from   optimizer import Optimizer_Adam
+from   loss      import Loss_MeanSquaredError
 
 class Model: 
 
     def __init__(self): 
-        self.layers = []
-        self.softmax_classifier_output = None
+        self.layers    = []
+        self.loss      = Loss_MeanSquaredError()
+        self.optimizer = Optimizer_Adam()
     
     def add(self, layer):
         self.layers.append(layer)
-    
-    def set(self, *, loss, optimizer, accuracy): 
-        self.loss      = loss
-        self.optimizer = optimizer
-        self.accuracy  = accuracy
 
     def finalize(self): 
         self.input_layer      = Layer_Input()
@@ -49,22 +46,17 @@ class Model:
         # Aggiornamento loss con i layer allenabili
         self.loss.remember_trainable_layers(self.trainable_layers)
 
-    def train(self, X, y, *, epochs = 1, print_every = 1, validation_data = None): 
+    def train(self, X, *, epochs = 1, print_every = 1, validation_data = None): 
         
-        self.accuracy.init(y)
-
         for epoch in range(1, epochs + 1):
             # Forward pass
             output = self.forward(X, training = True)
 
             # Calcolo loss
-            data_loss, regularization_loss = self.loss.calculate(output, y, include_regularization = True)
+            data_loss, regularization_loss = self.loss.calculate(output, X, include_regularization = True)
             loss = data_loss + regularization_loss
 
-            predictions = self.output_layer_activation.predictions(output)
-            accuracy    = self.accuracy.calculate(predictions, y)
-
-            self.backward(output, y)
+            self.backward(output, X)
 
             # Ottimizazzione
             self.optimizer.pre_update_params()
@@ -73,18 +65,16 @@ class Model:
             self.optimizer.post_update_params()
 
             if not epoch % print_every: 
-                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, data_loss: {regularization_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
+                print(f'epoch: {epoch}, loss: {loss:.3f}, data_loss: {data_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
 
         # Se c'e' la validazione dei dati
         if validation_data is not None: 
             # Leggibilita'
-            X_val, y_val  =  validation_data
+            X_val         =  validation_data
             output        =  self.forward(X_val, training=False)
-            loss          =  self.loss.calculate(output, y_val)
-            predictions    =  self.output_layer_activation.predictions(output)
-            accuracy      =  self.accuracy.calculate(predictions, y_val)
+            loss          =  self.loss.calculate(output)
 
-            print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')
+            print(f'validation loss: {loss:.3f}')
 
     def forward(self, X, training): 
         # Chiamata al forward pass del layer di input
@@ -105,8 +95,7 @@ class Model:
         for layer in reversed(self.layers): 
             layer.backward(layer.next.dinputs)
 
-    # Sulla evaluation mi concentrero' solo sul loss
-    def evaluate(self, X_val, y_val, *, batch_size = None):
+    def evaluate(self, X_val, *, batch_size = None):
         validation_steps = 1
 
         # Calcolo numero di step
@@ -121,16 +110,16 @@ class Model:
             # Se batch_size non e' settato utilizzo uno step e tutto il dataset
             if batch_size is None: 
                 batch_X = X_val
-                batch_y = y_val
+                # batch_y = y_val
             
             # Altrimenti divido il batch
             else: 
                 batch_X = X_val[step * batch_size:(step + 1) * batch_size]
-                batch_y = y_val[step * batch_size:(step + 1) * batch_size]
+                # batch_y = y_val[step * batch_size:(step + 1) * batch_size]
             
             output = self.forward(batch_X, training = False)
             # Calcolo della loss
-            self.loss.calculate(output, batch_y)
+            self.loss.calculate(output, batch_X) # y
 
         validation_loss = self.loss.calculate_accumulated()
         print(f'validation, loss: {validation_loss:.3f}')

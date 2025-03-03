@@ -30,10 +30,7 @@ class Activation_Linear:
     def predictions(self, outputs): 
         return (outputs > 0.5) * 1
     
-
-# Aggiungo una nuova attivazione: la Sigmoidea
-# Questo perché i dati che tratterò sono normalizzati nell'intervallo [0, 1],
-# che è l'intervallo in cui la sigmoide restituisce valori.
+    
 class Activation_Sigmoid:
 
     def forward(self, inputs, training):

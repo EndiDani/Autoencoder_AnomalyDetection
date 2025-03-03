@@ -2,6 +2,11 @@ import numpy as np
 
 
 class Loss: 
+
+    def __init__(self):
+        self.accumulated_count = 0
+        self.accumulated_sum   = 0
+        
     # Regolarizzatore per il calcolo su loss
     def regularization_loss(self): 
         # default

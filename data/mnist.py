@@ -8,9 +8,9 @@ def load_mnist():
     # Normalizzazione dei dati (0-255 -> 0-1)
     X_train, X_test = X_train / 255.0, X_test / 255.0
 
-    # Remodeling delle immagini per aggiungere un canale -> 28x28x1
-    X_train = X_train.reshape(-1, 28, 28, 1)
-    X_test  = X_test.reshape(-1, 28, 28, 1)
+    # Flattening delle immagini da 28x28 a 784
+    X_train = X_train.reshape(-1, 784)
+    X_test  = X_test.reshape(-1, 784)
 
     return (X_train, y_train), (X_test, y_test)
 

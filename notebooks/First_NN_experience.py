@@ -32,9 +32,6 @@ def sine_data(samples=1000):
 
     return X, y
 
-
-
-
 # Definizione dei layer e activations
 class Layer_Dense:
     
@@ -82,7 +79,6 @@ class Layer_Dense:
         # Calcolo del gradiente sugli inputs
         self.dinputs  = np.dot(dvalues, self.weights.T)
 
-
 class Layer_Dropout: 
 
     def __init__(self, rate): 
@@ -102,12 +98,10 @@ class Layer_Dropout:
     def backward(self, dvalues): 
         self.dinputs = dvalues * self.binary_mask
 
-
 class Layer_Input:
 
     def forward(self, inputs, training): 
         self.output = inputs
-
 
 class Activation_ReLU: 
 
@@ -124,6 +118,20 @@ class Activation_ReLU:
     def predictions(self, outputs): 
         return outputs
 
+# Aggiungo una nuova attivazione: la Sigmoidea
+# Questo perché i dati che tratterò sono normalizzati nell'intervallo [0, 1],
+# che è l'intervallo in cui la sigmoide restituisce valori.
+class Activation_Sigmoid:
+
+    def forward(self, inputs, training):
+        self.inputs  = inputs # Salvataggio inputs 
+        self.output  = 1 / (1 + np.exp(-inputs))
+
+    def backward(self, dvalues):
+        self.dinputs = dvalues * (1 - self.output) * self.output
+
+    def predictions(self, outputs):
+        return (outputs > 0.5) * 1
 
 class Activation_Softmax: 
 
@@ -220,9 +228,7 @@ class Optimizer_Adam:
 
     def post_update_params(self): 
         self.iterations += 1
-
-
-# Calcolo Loss 
+ 
 class Loss: 
 
     # Regolarizzatore per il calcolo su loss
@@ -303,8 +309,6 @@ class Loss_CategoricalCrossentropy(Loss):
         # Calcolo del gradiente e normalizzazione
         self.dinputs = -y_true / dvalues
         self.dinputs = self.dinputs / samples
-
-
 # Combinazione di Softmax e cross-entropy loss per un backward piu' veloce
 class Activation_Softmax_Loss_CategoricalCrossentropy(): 
 
@@ -331,7 +335,6 @@ class Activation_Softmax_Loss_CategoricalCrossentropy():
         # Calcolo e normalizzo il gradiente
         self.dinputs[range(samples), y_true] -= 1
         self.dinputs = self.dinputs / samples
-
 # Adotto Mean Squared Error loss (piu' adatto ad un Autoencoder)
 class Loss_MeanSquaredError(Loss): # con L2
 
@@ -347,14 +350,12 @@ class Loss_MeanSquaredError(Loss): # con L2
         self.dinputs = -2 * (y_true - dvalues) / outputs
         self.dinputs = self.dinputs / samples
 
-
 class Accuracy: 
 
     def calculate(self, predictions, y):
         comparison = self.compare(predictions, y)
         accuracy   = np.mean(comparison)
         return accuracy
-
 
 class Accuracy_Regression(Accuracy):
 
@@ -368,8 +369,6 @@ class Accuracy_Regression(Accuracy):
 
     def compare(self, predictions, y):
         return np.absolute(predictions - y) < self.precision
-
-
 
 class Model: 
 
@@ -440,7 +439,7 @@ class Model:
             self.optimizer.post_update_params()
 
             if not epoch % print_every: 
-                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, data_loss: {regularization_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
+                print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, data_loss: {data_loss:.3f}, reg_los: {regularization_loss:.3f}, lr: {self.optimizer.current_learning_rate}')
 
         # Se c'e' la validazione dei dati
         if validation_data is not None: 
@@ -448,7 +447,7 @@ class Model:
             X_val, y_val  =  validation_data
             output        =  self.forward(X_val, training=False)
             loss          =  self.loss.calculate(output, y_val)
-            predictions    =  self.output_layer_activation.predictions(output)
+            predictions   =  self.output_layer_activation.predictions(output)
             accuracy      =  self.accuracy.calculate(predictions, y_val)
 
             print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')
