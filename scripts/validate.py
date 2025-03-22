@@ -1,3 +1,11 @@
+from   dotenv import load_dotenv
+import os
+import sys
+
+load_dotenv()
+
+sys.path.extend(os.getenv("PYTHONPATH", "").split(":"))
+
 from   models.model      import Model
 from   data.mnist        import load_saved_data
 import matplotlib.pyplot as plt
