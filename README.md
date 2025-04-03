@@ -21,7 +21,7 @@ The project is organized in a simple yet functional way to guide you step by ste
 
 ## Requirements
 
-All the dependencies are listed in the `requirements.txt` file.
+All the dependencies are listed in the `requirements.txt` file, **but you will also need to ensure that Tkinter is installed** on your system.
 
 ## Getting Started
 
@@ -37,7 +37,23 @@ All the dependencies are listed in the `requirements.txt` file.
     pip install -r requirements.txt
     ```
 
-3. **Try the model!**
+3. **Ensure Tkinter is Installed (if not already)**:
+   Tkinter is required for GUI applications in Python. If it's not already installed, follow the instructions below for your operating system:
+   - **On Windows**: Tkinter is already included with Python, so there's no need to add it.
+   - **On Linux**: You can install Tkinter with the command:
+     
+      ```bash
+      sudo apt-get install python3-tk
+      ```
+   - **On macOS**: You can use Homebrew to install it:
+     
+     ```bash
+      brew install python-tk
+      ```
+     
+5. **Try the model!**
+   
+   Run the prediction script to test the model:
     ```bash
     python3 scripts/predict.py 
     ```
