@@ -1,13 +1,6 @@
-python-dotenv
-tensorflow  
-numpy
-matplotlib
 
-# You will need Tkinter for working with GUI applications in Python. 
-# Unlike other libraries, you can't install it directly with pip. 
-# Depending on your operating system, here's how to ensure it's installed:
-# On Windows, Tkinter is already included with Python, so there's no need to add it.
-# On Linux, you can install Tkinter with the command:
-# sudo apt-get install python3-tk
-# On macOS, you can use:
-# brew install python-tk
+matplotlib==3.10.1
+numpy==2.2.4
+python-dotenv==1.1.0
+tensorflow==2.19.0
+
